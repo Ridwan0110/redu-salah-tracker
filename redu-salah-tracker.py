@@ -1,19 +1,32 @@
 import customtkinter as ctk
-import tkinter as tk
 from tkinter import messagebox
-from tkcalendar import Calendar
 import json
 import requests
 import datetime
 import os
 from custom_calendar import CustomCalendar  # Import the custom calendar
 
-# Ensure the data directory exists
-data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+# Variables
+data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 os.makedirs(data_dir, exist_ok=True)
+json_file_path = os.path.join(data_dir, 'salah_data.json')  # Path to the JSON file
+data = {}
 
-# Path to the JSON file
-json_file_path = os.path.join(data_dir, 'salah_data.json')
+# CustomTKinter look settings
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
+
+# CustomTKinter Window settings
+app = ctk.CTk()
+app.geometry("500x450")
+app.title("Redu Salah Tracker")
+app.wm_resizable(False, False)
+app.wm_attributes('-topmost', False)
+# app.wm_iconbitmap("icon.ico")
+
+
+# app.wm_iconbitmap("icon.ico")
+
 
 # Function to save data locally
 def save_data():
@@ -31,6 +44,7 @@ def save_data():
     update_calendar_colors()
     messagebox.showinfo("Saved", "Salah data saved successfully!")
 
+
 # Function to load data
 def load_data():
     global data
@@ -39,6 +53,7 @@ def load_data():
             data = json.load(f)
     except FileNotFoundError:
         data = {}
+
 
 # Function to update UI from selected date
 def update_ui():
@@ -56,6 +71,7 @@ def update_ui():
         maghrib_var.set(False)
         isha_var.set(False)
 
+
 # Function to upload data to server
 def upload_data():
     try:
@@ -67,6 +83,7 @@ def upload_data():
             messagebox.showerror("Error", "Failed to upload data.")
     except Exception as e:
         messagebox.showerror("Error", str(e))
+
 
 # Function to download data from server
 def download_data():
@@ -83,6 +100,7 @@ def download_data():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
+
 # Function to update calendar colors based on prayer completion
 def update_calendar_colors():
     date_status = {}
@@ -94,17 +112,15 @@ def update_calendar_colors():
             date_status[date] = 'some_done'
     cal.update_date_colors(date_status)
 
-# Main App
-app = ctk.CTk()
-app.title("Salah Tracker")
 
-data = {}
+# Main App
 load_data()
 
 frame = ctk.CTkFrame(app)
 frame.pack(pady=20, padx=20, fill="both", expand=True)
 
-cal = CustomCalendar(frame, selectmode='day', year=datetime.datetime.now().year, month=datetime.datetime.now().month, day=datetime.datetime.now().day)
+cal = CustomCalendar(frame, selectmode='day', year=datetime.datetime.now().year, month=datetime.datetime.now().month,
+                     day=datetime.datetime.now().day)
 cal.pack(pady=10)
 
 fajr_var = ctk.BooleanVar()
