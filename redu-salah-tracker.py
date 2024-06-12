@@ -4,6 +4,25 @@ from tkcalendar import Calendar
 import json
 import requests
 import datetime
+import os
+
+# Variables
+data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
+os.makedirs(data_dir, exist_ok=True)
+json_file_path = os.path.join(data_dir, 'salah_data.json')  # Path to the JSON file
+data = {}
+
+# CustomTKinter look settings
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
+
+# CustomTKinter Window settings
+app = ctk.CTk()
+app.geometry("500x450")
+app.title("Redu Salah Tracker")
+app.wm_resizable(False, False)
+app.wm_attributes('-topmost', False)
+# app.wm_iconbitmap("icon.ico")
 
 
 # Function to save data locally
@@ -17,7 +36,7 @@ def save_data():
         "Isha": isha_var.get()
     }
     data[date] = salah_data
-    with open('salah_data.json', 'w') as f:
+    with open(json_file_path, 'w') as f:
         json.dump(data, f)
     tk.messagebox.showinfo("Saved", "Salah data saved successfully!")
 
@@ -26,7 +45,7 @@ def save_data():
 def load_data():
     global data
     try:
-        with open('salah_data.json', 'r') as f:
+        with open(json_file_path, 'r') as f:
             data = json.load(f)
     except FileNotFoundError:
         data = {}
@@ -52,8 +71,9 @@ def update_ui():
 # Function to upload data to server
 def upload_data():
     try:
-        with open('salah_data.json', 'rb') as f:
-            response = requests.post('http://www.script.ridwanabid.com/redu-salah-tracker-server/upload', files={'file': f})
+        with open(json_file_path, 'rb') as f:
+            response = requests.post('http://www.script.ridwanabid.com/redu-salah-tracker-server/upload',
+                                     files={'file': f})
         if response.status_code == 200:
             tk.messagebox.showinfo("Uploaded", "Data uploaded successfully!")
         else:
@@ -67,9 +87,10 @@ def download_data():
     try:
         response = requests.get('http://www.script.ridwanabid.com/redu-salah-tracker-server/download')
         if response.status_code == 200:
-            with open('salah_data.json', 'wb') as f:
+            with open(json_file_path, 'wb') as f:
                 f.write(response.content)
             load_data()
+            update_ui()
             tk.messagebox.showinfo("Downloaded", "Data downloaded and loaded successfully!")
         else:
             tk.messagebox.showerror("Error", "Failed to download data.")
@@ -78,10 +99,6 @@ def download_data():
 
 
 # Main App
-app = ctk.CTk()
-app.title("Salah Tracker")
-
-data = {}
 load_data()
 
 frame = ctk.CTkFrame(app)
