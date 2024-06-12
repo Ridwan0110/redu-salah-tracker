@@ -1,0 +1,127 @@
+import customtkinter as ctk
+import tkinter as tk
+from tkcalendar import Calendar
+import json
+import requests
+import datetime
+
+
+# Function to save data locally
+def save_data():
+    date = cal.get_date()
+    salah_data = {
+        "Fajr": fajr_var.get(),
+        "Dhuhr": dhuhr_var.get(),
+        "Asr": asr_var.get(),
+        "Maghrib": maghrib_var.get(),
+        "Isha": isha_var.get()
+    }
+    data[date] = salah_data
+    with open('salah_data.json', 'w') as f:
+        json.dump(data, f)
+    tk.messagebox.showinfo("Saved", "Salah data saved successfully!")
+
+
+# Function to load data
+def load_data():
+    global data
+    try:
+        with open('salah_data.json', 'r') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+
+
+# Function to update UI from selected date
+def update_ui():
+    date = cal.get_date()
+    if date in data:
+        fajr_var.set(data[date]["Fajr"])
+        dhuhr_var.set(data[date]["Dhuhr"])
+        asr_var.set(data[date]["Asr"])
+        maghrib_var.set(data[date]["Maghrib"])
+        isha_var.set(data[date]["Isha"])
+    else:
+        fajr_var.set(False)
+        dhuhr_var.set(False)
+        asr_var.set(False)
+        maghrib_var.set(False)
+        isha_var.set(False)
+
+
+# Function to upload data to server
+def upload_data():
+    try:
+        with open('salah_data.json', 'rb') as f:
+            response = requests.post('http://www.script.ridwanabid.com/redu-salah-tracker-server/upload', files={'file': f})
+        if response.status_code == 200:
+            tk.messagebox.showinfo("Uploaded", "Data uploaded successfully!")
+        else:
+            tk.messagebox.showerror("Error", "Failed to upload data.")
+    except Exception as e:
+        tk.messagebox.showerror("Error", str(e))
+
+
+# Function to download data from server
+def download_data():
+    try:
+        response = requests.get('http://www.script.ridwanabid.com/redu-salah-tracker-server/download')
+        if response.status_code == 200:
+            with open('salah_data.json', 'wb') as f:
+                f.write(response.content)
+            load_data()
+            tk.messagebox.showinfo("Downloaded", "Data downloaded and loaded successfully!")
+        else:
+            tk.messagebox.showerror("Error", "Failed to download data.")
+    except Exception as e:
+        tk.messagebox.showerror("Error", str(e))
+
+
+# Main App
+app = ctk.CTk()
+app.title("Salah Tracker")
+
+data = {}
+load_data()
+
+frame = ctk.CTkFrame(app)
+frame.pack(pady=20, padx=20, fill="both", expand=True)
+
+cal = Calendar(frame, selectmode='day', year=datetime.datetime.now().year, month=datetime.datetime.now().month,
+               day=datetime.datetime.now().day)
+cal.pack(pady=10)
+
+fajr_var = ctk.BooleanVar()
+dhuhr_var = ctk.BooleanVar()
+asr_var = ctk.BooleanVar()
+maghrib_var = ctk.BooleanVar()
+isha_var = ctk.BooleanVar()
+
+fajr_check = ctk.CTkCheckBox(frame, text="Fajr", variable=fajr_var)
+dhuhr_check = ctk.CTkCheckBox(frame, text="Dhuhr", variable=dhuhr_var)
+asr_check = ctk.CTkCheckBox(frame, text="Asr", variable=asr_var)
+maghrib_check = ctk.CTkCheckBox(frame, text="Maghrib", variable=maghrib_var)
+isha_check = ctk.CTkCheckBox(frame, text="Isha", variable=isha_var)
+
+fajr_check.pack()
+dhuhr_check.pack()
+asr_check.pack()
+maghrib_check.pack()
+isha_check.pack()
+
+button_frame = ctk.CTkFrame(frame)
+button_frame.pack(pady=10)
+
+save_button = ctk.CTkButton(button_frame, text="Save Data", command=save_data)
+save_button.grid(row=0, column=0, padx=5)
+
+upload_button = ctk.CTkButton(button_frame, text="Upload Data", command=upload_data)
+upload_button.grid(row=0, column=1, padx=5)
+
+download_button = ctk.CTkButton(button_frame, text="Download Data", command=download_data)
+download_button.grid(row=0, column=2, padx=5)
+
+cal.bind("<<CalendarSelected>>", lambda e: update_ui())
+update_ui()
+
+app.mainloop()
