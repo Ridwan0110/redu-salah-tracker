@@ -1,10 +1,11 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import font, messagebox
+from tkinter import font, messagebox, simpledialog
 from tkcalendar import Calendar
 from screeninfo import get_monitors
 import json
 import requests
+from urllib.parse import urlparse
 import datetime
 import os
 
@@ -12,6 +13,7 @@ import os
 data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 os.makedirs(data_dir, exist_ok=True)
 json_file_path = os.path.join(data_dir, 'salah_data.json')  # Path to the JSON file
+server_file_path = os.path.join(data_dir, 'server.txt')  # Path to the preference file
 data = {}
 
 # CustomTKinter look settings
@@ -24,20 +26,7 @@ app.geometry("500x450")
 app.title("Redu Salah Tracker")
 app.wm_resizable(False, False)
 app.wm_attributes('-topmost', False)
-# app.wm_iconbitmap("icon.ico")
-
-
-def getOptimalFontSize():
-    # Get the primary monitor (assuming there's only one monitor)
-    primary_monitor = get_monitors()[0]
-    screen_width = primary_monitor.width
-    # Define reference screen resolution and font size
-    reference_screen_width = 1920  # Width of the reference screen resolution (1080p)
-    reference_font_size = 12  # Font size for the reference screen resolution
-    screen_ratio = reference_font_size / reference_screen_width
-    # Calculate the optimal font size for the screen resolution
-    font_size = round(screen_width * screen_ratio)
-    return font_size
+app.wm_iconbitmap("icon.ico")
 
 
 class CustomCalendar(Calendar):
@@ -88,6 +77,127 @@ class CustomCalendar(Calendar):
                 self.calevent_create(date_obj, '', tags='one_done')
             elif status == 'none':
                 self.calevent_create(date_obj, '', tags='none')
+
+
+class CustomDialog(tk.Toplevel):
+    def __init__(self, parent, title=None, icon_path=None):
+        super().__init__(parent)
+        self.entry = None
+        self.transient(parent)
+        self.parent = parent
+        self.icon_path = icon_path
+
+        if title:
+            self.title(title)
+
+        if self.icon_path:
+            self.iconbitmap(self.icon_path)
+
+        self.result = None
+
+        self.body_frame = tk.Frame(self)
+        self.body_frame.pack(pady=5, padx=5)
+
+        self.body(self.body_frame)
+
+        self.button_box()
+
+        self.grab_set()
+
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+
+        self.geometry("+%d+%d" % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
+
+        self.wait_window(self)
+
+    def body(self, master):
+        tk.Label(master, text="Please enter the server address:").pack(pady=5)
+        self.entry = tk.Entry(master)
+        self.entry.pack(pady=5)
+        self.entry.focus_set()
+
+    def button_box(self):
+        box = tk.Frame(self)
+
+        tk.Button(box, text="OK", width=10, command=self.ok).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(box, text="Cancel", width=10, command=self.cancel).pack(side=tk.LEFT, padx=5, pady=5)
+
+        box.pack()
+
+    def ok(self):
+        self.result = self.entry.get()
+        self.destroy()
+
+    def cancel(self):
+        self.result = None
+        self.destroy()
+
+
+def check_server_file():
+    if not os.path.exists(server_file_path):
+        prompt_for_server_address()
+
+
+def prompt_for_server_address():
+    dialog = CustomDialog(app, "Server Address", icon_path="icon.ico")
+    server_address = dialog.result
+    if server_address:
+        if is_valid_url(server_address):
+            with open(server_file_path, 'w') as f:
+                f.write(server_address)
+        else:
+            messagebox.showerror("Error", "The entered server address is not valid or not reachable. Please try again.")
+            prompt_for_server_address()
+    else:
+        messagebox.showerror("Error", "Server address cannot be empty.")
+        prompt_for_server_address()
+
+
+def get_server_address():
+    with open(server_file_path, 'r') as f:
+        return f.read().strip()
+
+
+def change_server_address():
+    server_address = simpledialog.askstring("Server Address", "Please enter the new server address:")
+    if server_address:
+        with open(server_file_path, 'w') as f:
+            f.write(server_address)
+        global server_url
+        server_url = server_address
+        messagebox.showinfo("Server Address", "Server address updated successfully.")
+    else:
+        messagebox.showerror("Error", "Server address cannot be empty.")
+
+
+def is_valid_url(url):
+    # Check if the URL is well-formed
+    parsed_url = urlparse(url)
+    if not all([parsed_url.scheme, parsed_url.netloc]):
+        return False
+
+    # Check if the URL is reachable
+    try:
+        response = requests.head(url)
+        if response.status_code < 400:  # Check for a valid status code
+            return True
+        else:
+            return False
+    except requests.RequestException:
+        return False
+
+
+def getOptimalFontSize():
+    # Get the primary monitor (assuming there's only one monitor)
+    primary_monitor = get_monitors()[0]
+    screen_width = primary_monitor.width
+    # Define reference screen resolution and font size
+    reference_screen_width = 1920  # Width of the reference screen resolution (1080p)
+    reference_font_size = 12  # Font size for the reference screen resolution
+    screen_ratio = reference_font_size / reference_screen_width
+    # Calculate the optimal font size for the screen resolution
+    font_size = round(screen_width * screen_ratio)
+    return font_size
 
 
 # Function to save data locally
@@ -142,8 +252,7 @@ def update_ui():
 def upload_data():
     try:
         with open(json_file_path, 'rb') as f:
-            response = requests.post('http://www.script.ridwanabid.com/redu-salah-tracker-server/upload',
-                                     files={'file': f})
+            response = requests.post(f'{server_url}/upload', files={'file': f})
         if response.status_code == 200:
             messagebox.showinfo("Uploaded", "Data uploaded successfully!")
         else:
@@ -155,7 +264,7 @@ def upload_data():
 # Function to download data from server
 def download_data():
     try:
-        response = requests.get('http://www.script.ridwanabid.com/redu-salah-tracker-server/download')
+        response = requests.get(f'{server_url}/download')
         if response.status_code == 200:
             with open(json_file_path, 'wb') as f:
                 f.write(response.content)
@@ -198,15 +307,27 @@ def reset_data():
 
 
 # Main App
+check_server_file()
+server_url = get_server_address()
 load_data()
 
+# GUI START
 frame = ctk.CTkFrame(app)
 frame.pack(pady=20, padx=20, fill="both", expand=True)
 
+# MENUBAR
+menubar = tk.Menu(app)
+app.config(menu=menubar)
+app_menu = tk.Menu(menubar, tearoff=False)
+menubar.add_cascade(label="Settings", menu=app_menu)
+app_menu.add_command(label="Change Server", command=change_server_address)
+
+# CALENDAR
 cal = CustomCalendar(frame, selectmode='day', year=datetime.datetime.now().year, month=datetime.datetime.now().month,
                      day=datetime.datetime.now().day)
 cal.pack(pady=10, padx=10, fill="both", expand=True)
 
+# SALAH VARIABLES
 fajr_var = ctk.BooleanVar()
 dhuhr_var = ctk.BooleanVar()
 asr_var = ctk.BooleanVar()
@@ -225,6 +346,7 @@ asr_check.pack()
 maghrib_check.pack()
 isha_check.pack()
 
+# BUTTON FRAME AND BUTTONS
 button_frame = ctk.CTkFrame(frame)
 button_frame.pack(pady=10)
 
@@ -239,6 +361,7 @@ download_button.grid(row=0, column=2, padx=5)
 
 reset_button = ctk.CTkButton(frame, text="Reset", command=reset_data)
 reset_button.pack()
+# GUI END
 
 cal.bind("<<CalendarSelected>>", lambda e: update_ui())
 update_ui()
