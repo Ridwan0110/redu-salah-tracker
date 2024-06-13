@@ -14,6 +14,7 @@ data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 os.makedirs(data_dir, exist_ok=True)
 json_file_path = os.path.join(data_dir, 'salah_data.json')  # Path to the JSON file
 server_file_path = os.path.join(data_dir, 'server.txt')  # Path to the preference file
+version_file_path = os.path.join(os.getcwd(), 'version.txt')  # Path to the preference file
 data = {}
 
 # CustomTKinter look settings
@@ -79,58 +80,9 @@ class CustomCalendar(Calendar):
                 self.calevent_create(date_obj, '', tags='none')
 
 
-class CustomDialog(tk.Toplevel):
-    def __init__(self, parent, title=None, icon_path=None):
-        super().__init__(parent)
-        self.entry = None
-        self.transient(parent)
-        self.parent = parent
-        self.icon_path = icon_path
-
-        if title:
-            self.title(title)
-
-        if self.icon_path:
-            self.iconbitmap(self.icon_path)
-
-        self.result = None
-
-        self.body_frame = tk.Frame(self)
-        self.body_frame.pack(pady=5, padx=5)
-
-        self.body(self.body_frame)
-
-        self.button_box()
-
-        self.grab_set()
-
-        self.protocol("WM_DELETE_WINDOW", self.cancel)
-
-        self.geometry("+%d+%d" % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
-
-        self.wait_window(self)
-
-    def body(self, master):
-        tk.Label(master, text="Please enter the server address:").pack(pady=5)
-        self.entry = tk.Entry(master)
-        self.entry.pack(pady=5)
-        self.entry.focus_set()
-
-    def button_box(self):
-        box = tk.Frame(self)
-
-        tk.Button(box, text="OK", width=10, command=self.ok).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Button(box, text="Cancel", width=10, command=self.cancel).pack(side=tk.LEFT, padx=5, pady=5)
-
-        box.pack()
-
-    def ok(self):
-        self.result = self.entry.get()
-        self.destroy()
-
-    def cancel(self):
-        self.result = None
-        self.destroy()
+def current_version(file):
+    with open(file, 'r') as f:
+        return f.read().strip()
 
 
 def check_server_file():
@@ -139,18 +91,65 @@ def check_server_file():
 
 
 def prompt_for_server_address():
-    dialog = CustomDialog(app, "Server Address", icon_path="icon.ico")
-    server_address = dialog.result
-    if server_address:
-        if is_valid_url(server_address):
-            with open(server_file_path, 'w') as f:
-                f.write(server_address)
+    dialog = ctk.CTkToplevel(app)
+    dialog.title("Server Address")
+    dialog.geometry("300x150")
+
+    # Delay setting the icon to avoid the customtkinter override issue
+    dialog.after(250, lambda: dialog.iconbitmap('icon.ico'))
+
+    def on_ok():
+        server_address = entry.get()
+        if server_address:
+            if is_valid_url(server_address):
+                with open(server_file_path, 'w') as f:
+                    f.write(server_address)
+                messagebox.showinfo("Success", "Server address saved successfully.")
+                dialog.destroy()
+            else:
+                messagebox.showerror("Error", "Invalid server address or server unreachable.")
         else:
-            messagebox.showerror("Error", "The entered server address is not valid or not reachable. Please try again.")
-            prompt_for_server_address()
-    else:
-        messagebox.showerror("Error", "Server address cannot be empty.")
-        prompt_for_server_address()
+            messagebox.showerror("Error", "Server address cannot be empty.")
+
+    popup_frame = ctk.CTkFrame(dialog)
+    popup_frame.pack(pady=20, padx=20, fill="both", expand=True)
+
+    ctk.CTkLabel(popup_frame, text="Please enter the server address:").pack(pady=5)
+    entry = ctk.CTkEntry(popup_frame)
+    entry.pack(pady=5)
+    entry.focus_set()
+
+    popup_button_frame = ctk.CTkFrame(popup_frame)
+    popup_button_frame.pack(pady=5)
+    ctk.CTkButton(popup_button_frame, text="OK", command=on_ok).pack(side=ctk.LEFT, padx=5)
+    ctk.CTkButton(popup_button_frame, text="Cancel", command=dialog.destroy).pack(side=ctk.LEFT, padx=5)
+
+    app.wait_window(dialog)
+
+
+def about():
+    about_window = ctk.CTkToplevel(app)
+    about_window.title("About")
+    about_window.geometry("300x200")
+
+    # Delay setting the icon to avoid the customtkinter override issue
+    about_window.after(250, lambda: about_window.iconbitmap('icon.ico'))
+
+    popup_frame = ctk.CTkFrame(about_window)
+    popup_frame.pack(pady=20, padx=20, fill="both", expand=True)
+
+    name = ctk.CTkLabel(popup_frame, 200, 20, text="Redu Salah Tracker", font=("Arial", 24))
+    name.pack(pady=10)
+
+    details = ctk.CTkTextbox(popup_frame, 100, 20, 0, 0, fg_color="transparent")
+    details.pack(pady=10)
+    details.insert(0.0, f"Version: {current_version(version_file_path)}")
+    details.configure(state="disabled")
+
+    author = ctk.CTkTextbox(popup_frame, 200, 20, 0, 0, fg_color="transparent")
+    author.pack(pady=10)
+    author.insert(0.0, "Made by Ridwan Hossain Abid")
+    author.configure(state="disabled")
 
 
 def get_server_address():
@@ -321,6 +320,7 @@ app.config(menu=menubar)
 app_menu = tk.Menu(menubar, tearoff=False)
 menubar.add_cascade(label="Settings", menu=app_menu)
 app_menu.add_command(label="Change Server", command=change_server_address)
+app_menu.add_command(label="About", command=about)
 
 # CALENDAR
 cal = CustomCalendar(frame, selectmode='day', year=datetime.datetime.now().year, month=datetime.datetime.now().month,

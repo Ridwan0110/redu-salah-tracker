@@ -3,3 +3,7 @@
 __pycache__/
 run.bat
 test.py
+build/
+dist/
+redu-salah-tracker.spec
+
