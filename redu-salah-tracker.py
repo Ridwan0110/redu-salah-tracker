@@ -1,13 +1,17 @@
+import re
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import font, messagebox, simpledialog
+from tkinter import font, messagebox
 from tkcalendar import Calendar
 from screeninfo import get_monitors
 import json
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import datetime
 import os
+import platform
+import hashlib
+import socket
 
 # Variables
 data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
@@ -16,6 +20,9 @@ json_file_path = os.path.join(data_dir, 'salah_data.json')  # Path to the JSON f
 server_file_path = os.path.join(data_dir, 'server.txt')  # Path to the preference file
 version_file_path = os.path.join(os.getcwd(), 'version.txt')  # Path to the preference file
 data = {}
+cancelled = False
+protocol = ['http://', 'https://']
+protocol_no = 0
 
 # CustomTKinter look settings
 ctk.set_appearance_mode("light")
@@ -80,6 +87,106 @@ class CustomCalendar(Calendar):
                 self.calevent_create(date_obj, '', tags='none')
 
 
+def compute_sha256(file_path):
+    """
+    Compute the SHA-256 hash of a file.
+    """
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read and update hash in chunks of 4K
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
+def creation_date(path_to_file):
+    """
+    Try to get the date that a file was created, falling back to when it was
+    last modified if that isn't possible.
+    See http://stackoverflow.com/a/39501288/1709587 for explanation.
+    """
+    # Got from https://stackoverflow.com/questions/237079/how-do-i-get-file-creation-and-modification-date-times
+    if platform.system() == 'Windows':
+        return os.path.getmtime(path_to_file)
+    else:
+        stat = os.stat(path_to_file)
+        try:
+            return stat.st_birthtime
+        except AttributeError:
+            # We're probably on Linux. No easy way to get creation dates here,
+            # so we'll settle for when its content was last modified.
+            return stat.st_mtime
+
+
+def startup():
+    global server_url_actual
+    local_file_timestamp = creation_date(json_file_path)
+    local_file_modified_date = datetime.datetime.fromtimestamp(local_file_timestamp)
+    local_file_hash = compute_sha256(json_file_path)
+
+    is_reachable, response = check_server_status(server_url_actual)
+
+    if is_reachable:
+        print(f"{server_url_actual} response: {response}")
+        try:
+            response = requests.get(f'{server_url_actual}/file-metadata')
+            if response.status_code == 200:
+                metadata = response.json()
+                cloud_file_timestamp = response.json().get('last_modified')
+                cloud_file_modified_date = datetime.datetime.fromtimestamp(cloud_file_timestamp)
+                cloud_file_hash = metadata.get('sha256')
+
+                print("Local file last modified time:", local_file_modified_date)
+                print("Cloud file last modified time:", cloud_file_modified_date)
+
+                # Compare the dates
+                if local_file_modified_date > cloud_file_modified_date:
+                    print("Local file is newer than the cloud file")
+                elif local_file_modified_date < cloud_file_modified_date:
+                    print("Local file is older than the cloud file")
+                else:
+                    print("Local file and cloud file are the same")
+
+                print("Local file SHA-256 hash:", local_file_hash)
+                print("Cloud file SHA-256 hash:", cloud_file_hash)
+
+                # Compare the hash values
+                if local_file_hash == cloud_file_hash:
+                    print("Local file and cloud file are the same")
+                else:
+                    print("Local file and cloud file are different")
+                    # Prompt the user for further action
+            else:
+                print("Failed to get cloud file metadata:", response.json().get('error'))
+        except requests.exceptions.InvalidSchema:
+            # Might happen cause the protocol i.e. http is not correct.
+            print("Exiting..")
+            exit(1)
+        except requests.exceptions.JSONDecodeError:
+            # Might happen cause there is no JSON file or JSON file is not properly formated.
+            print("Error: Might happen cause there is no JSON file or JSON file is not properly formated. Server:")
+            print(server_url_actual)
+            prompt_for_server_address()
+        except requests.exceptions.ConnectionError:
+            # Might happen cause server is not responding.
+            print("Exiting..")
+            exit(1)
+        except requests.exceptions.InvalidURL:
+            # Might happen cause url is invalid
+            print("Exiting..")
+            exit(1)
+    elif not is_reachable:
+        print(f"{server_url_actual} response time: {response}")
+        messagebox.showwarning("Error", "Server is not reachable.")
+        prompt_for_server_address()
+
+        if not cancelled:
+            _, server_url_actual, _ = update_server_address()
+            startup()
+        else:
+            exit(0)
+
+
 def current_version(file):
     with open(file, 'r') as f:
         return f.read().strip()
@@ -87,10 +194,71 @@ def current_version(file):
 
 def check_server_file():
     if not os.path.exists(server_file_path):
-        prompt_for_server_address()
+        return False
+    else:
+        return True
+
+
+def dns_resolution_check(server):
+    """
+    Check if the domain can be resolved to an IP address.
+    """
+    try:
+        # Remove protocol if included
+        parsed_url = urlparse(server)
+        hostname = parsed_url.netloc if parsed_url.netloc else parsed_url.path
+        ip = socket.gethostbyname(hostname)
+        return True, f"Resolved IP: {ip}"
+    except socket.gaierror as e:
+        return False, f"DNS resolution failed: {e}"
+
+
+def hyper_text_transfer_protocol_check(server):
+    """
+    Check if the server is reachable by making an HTTP GET request.
+    """
+    try:
+        response = requests.get(server, timeout=5)
+        if response.status_code == 200:
+            return True, f"Server is reachable. Status code: {response.status_code}", response.status_code
+        else:
+            return False, f"Server returned a non-200 status code: {response.status_code}", response.status_code
+    except requests.ConnectionError:
+        return False, "Connection error", None
+    except requests.Timeout:
+        return False, "Request timed out", None
+    except requests.RequestException as e:
+        return False, str(e), None
+
+
+def check_server_status(server):
+    if server_address_type == "ip":
+        server_port = return_port(server)
+        server = remove_port(server)
+        http_server = f"{protocol[protocol_no]}{server}:{server_port}"
+        http_check, http_response, http_status_code = hyper_text_transfer_protocol_check(server=http_server)
+    else:
+        http_check, http_response, http_status_code = hyper_text_transfer_protocol_check(server)
+
+    dns_check, dns_response = dns_resolution_check(server)
+    dns_check_pass = False
+    http_check_pass = False
+
+    if dns_check:
+        dns_check_pass = True
+    if http_check:
+        http_check_pass = True
+
+    if dns_check_pass and http_check_pass:
+        return True, f"\n\tDNS check: {dns_response},\tHTTP check: {http_response}"
+    elif dns_check_pass and http_response == f"Server returned a non-200 status code: {http_status_code}":
+        return True, f"\n\tDNS check: {dns_response},\tHTTP check: {http_response}"
+    else:
+        return False, f"\n\tDNS check: {dns_response},\tHTTP check: {http_response}"
 
 
 def prompt_for_server_address():
+    global server_url_actual
     dialog = ctk.CTkToplevel(app)
     dialog.title("Server Address")
     dialog.geometry("300x150")
@@ -99,9 +267,17 @@ def prompt_for_server_address():
     dialog.after(250, lambda: dialog.iconbitmap('icon.ico'))
 
     def on_ok():
+        global server_url_actual
         server_address = entry.get()
-        if server_address:
-            if is_valid_url(server_address):
+        server_url_actual = "http://www." + server_address
+        server_url_no_www = remove_www(server_url_actual)
+        if server_url_actual:
+            if is_valid_url(server_url_actual):
+                with open(server_file_path, 'w') as f:
+                    f.write(server_address)
+                messagebox.showinfo("Success", "Server address saved successfully.")
+                dialog.destroy()
+            elif is_valid_url(server_url_no_www):
                 with open(server_file_path, 'w') as f:
                     f.write(server_address)
                 messagebox.showinfo("Success", "Server address saved successfully.")
@@ -110,6 +286,17 @@ def prompt_for_server_address():
                 messagebox.showerror("Error", "Invalid server address or server unreachable.")
         else:
             messagebox.showerror("Error", "Server address cannot be empty.")
+
+    def on_cancel():
+        global cancelled
+        cancelled = True
+        dialog.destroy()
+
+    def on_close():
+        on_cancel()
+
+    # Set up the close protocol to call on_close
+    dialog.protocol("WM_DELETE_WINDOW", on_close)
 
     popup_frame = ctk.CTkFrame(dialog)
     popup_frame.pack(pady=20, padx=20, fill="both", expand=True)
@@ -122,7 +309,7 @@ def prompt_for_server_address():
     popup_button_frame = ctk.CTkFrame(popup_frame)
     popup_button_frame.pack(pady=5)
     ctk.CTkButton(popup_button_frame, text="OK", command=on_ok).pack(side=ctk.LEFT, padx=5)
-    ctk.CTkButton(popup_button_frame, text="Cancel", command=dialog.destroy).pack(side=ctk.LEFT, padx=5)
+    ctk.CTkButton(popup_button_frame, text="Cancel", command=on_cancel).pack(side=ctk.LEFT, padx=5)
 
     app.wait_window(dialog)
 
@@ -157,16 +344,23 @@ def get_server_address():
         return f.read().strip()
 
 
-def change_server_address():
-    server_address = simpledialog.askstring("Server Address", "Please enter the new server address:")
-    if server_address:
-        with open(server_file_path, 'w') as f:
-            f.write(server_address)
-        global server_url
-        server_url = server_address
-        messagebox.showinfo("Server Address", "Server address updated successfully.")
-    else:
-        messagebox.showerror("Error", "Server address cannot be empty.")
+def update_server_address():
+    file_status = check_server_file()
+    if file_status:
+        server = get_server_address()
+        server_url_main = f"{protocol[protocol_no]}www." + server
+        server_type = is_ip_or_domain(server_url_main)
+        if server_type == "ip":
+            server_url_main = remove_www(server_url_main)
+        print(f"Server type: {server_type}")
+        return server, server_url_main, server_type
+    elif not file_status:
+        prompt_for_server_address()
+        server = get_server_address()
+        server_url_main = f"{protocol[protocol_no]}www." + server
+        server_type = is_ip_or_domain(server_url_main)
+        print(f"Server type: {server_type}")
+        return server, server_url_main, server_type
 
 
 def is_valid_url(url):
@@ -184,6 +378,57 @@ def is_valid_url(url):
             return False
     except requests.RequestException:
         return False
+
+
+def remove_www(url):
+    parsed_url = urlparse(url)
+    netloc = parsed_url.netloc
+
+    # Remove 'www.' if it exists at the beginning of the netloc
+    if netloc.startswith('www.'):
+        netloc = netloc[4:]
+
+    # Reconstruct the URL without 'www.'
+    new_url = urlunparse((parsed_url.scheme, netloc, parsed_url.path,
+                          parsed_url.params, parsed_url.query, parsed_url.fragment))
+    return new_url
+
+
+def remove_port(url):
+    netloc = urlparse(url).netloc
+
+    # Strip the port number if present
+    if ':' in netloc:
+        netloc = netloc.split(':')[0]
+        print("Netloc: " + netloc)
+        return netloc
+
+
+def return_port(url):
+    parsed_url = urlparse(url)
+    port = parsed_url.port
+    if port:
+        return str(port)
+
+
+def is_ip_or_domain(url):
+    url = remove_www(url)
+    parsed_url = urlparse(url)
+    netloc = parsed_url.netloc
+
+    if server_address_type == "ip":
+        netloc = remove_port(url)
+
+    # Regular expression for matching an IPv4 address
+    ipv4_pattern = re.compile(r'^\d{1,3}(\.\d{1,3}){3}$')
+
+    # Regular expression for matching an IPv6 address
+    ipv6_pattern = re.compile(r'^[0-9a-fA-F:]+$')
+
+    if ipv4_pattern.match(netloc) or ipv6_pattern.match(netloc):
+        return "ip"
+    else:
+        return "domain"
 
 
 def getOptimalFontSize():
@@ -251,7 +496,7 @@ def update_ui():
 def upload_data():
     try:
         with open(json_file_path, 'rb') as f:
-            response = requests.post(f'{server_url}/upload', files={'file': f})
+            response = requests.post(f'{server_url_actual}/upload', files={'file': f})
         if response.status_code == 200:
             messagebox.showinfo("Uploaded", "Data uploaded successfully!")
         else:
@@ -263,7 +508,7 @@ def upload_data():
 # Function to download data from server
 def download_data():
     try:
-        response = requests.get(f'{server_url}/download')
+        response = requests.get(f'{server_url_actual}/download')
         if response.status_code == 200:
             with open(json_file_path, 'wb') as f:
                 f.write(response.content)
@@ -306,8 +551,7 @@ def reset_data():
 
 
 # Main App
-check_server_file()
-server_url = get_server_address()
+server_url, server_url_actual, server_address_type = update_server_address()
 load_data()
 
 # GUI START
@@ -319,7 +563,7 @@ menubar = tk.Menu(app)
 app.config(menu=menubar)
 app_menu = tk.Menu(menubar, tearoff=False)
 menubar.add_cascade(label="Settings", menu=app_menu)
-app_menu.add_command(label="Change Server", command=change_server_address)
+app_menu.add_command(label="Change Server", command=prompt_for_server_address)
 app_menu.add_command(label="About", command=about)
 
 # CALENDAR
@@ -363,6 +607,7 @@ reset_button = ctk.CTkButton(frame, text="Reset", command=reset_data)
 reset_button.pack()
 # GUI END
 
+startup()
 cal.bind("<<CalendarSelected>>", lambda e: update_ui())
 update_ui()
 update_calendar_colors()
